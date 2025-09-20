@@ -21,7 +21,7 @@ import srt  # Para parsear archivos SRT
 import shutil # Para borrar directorios de archivos temporales
 from src.models import AudioDescriptionItem
 from src.gui import TimeInputDialog, AudioSourceDialog
-from src.processing import generate_tts_audio_files
+from src.processing import generate_tts_audio_files, generate_video_with_ads
 
 # Intentar importar dependencias clave
 try:
@@ -606,82 +606,39 @@ class MainFrame(wx.Frame):
 
         self.generate_btn.Enable(False)
         self.generate_tts_btn.Enable(False)
-        thread = threading.Thread(target=self.generate_video_thread)
+        
+        thread = threading.Thread(target=self.run_video_generation_thread)
         thread.daemon = True
         thread.start()
 
-    def generate_video_thread(self):
-        wx.CallAfter(self.status_text.SetLabel, "Paso 1/5: Iniciando generación...")
-        wx.CallAfter(self.progress.SetValue, 0)
-        try:
-            output_path = self.output_ctrl.GetValue()
-            
-            wx.CallAfter(self.status_text.SetLabel, "Paso 2/5: Cargando video principal...")
-            wx.CallAfter(self.progress.SetValue, 10)
-            video = VideoFileClip(self.video_file)
-            
-            wx.CallAfter(self.status_text.SetLabel, f"Paso 3/5: Procesando audios de descripción...")
-            audio_clips = []
-            total_ads = len(self.audiodescriptions)
-            for i, item in enumerate(self.audiodescriptions):
-                try:
-                    ad_clip = AudioFileClip(item.archivo_audio).set_start(item.tiempo)
-                    audio_clips.append(ad_clip)
-                except Exception as e:
-                    print(f"Error cargando {item.archivo_audio}: {e}")
-            
-            wx.CallAfter(self.progress.SetValue, 30)
-            
-            if audio_clips:
-                descriptions_audio = CompositeAudioClip(audio_clips).volumex(self.vol_desc_ctrl.GetValue())
-            else:
-                descriptions_audio = None
+    def run_video_generation_thread(self):
+        def progress_callback(percent, message):
+            if percent is not None:
+                wx.CallAfter(self.progress.SetValue, percent)
+            if message is not None:
+                wx.CallAfter(self.status_text.SetLabel, message)
+        
+        # Gather data
+        output_path = self.output_ctrl.GetValue()
+        vol_orig = self.vol_orig_ctrl.GetValue()
+        vol_desc = self.vol_desc_ctrl.GetValue()
 
-            original_audio = video.audio.volumex(self.vol_orig_ctrl.GetValue()) if video.audio else None
-            
-            wx.CallAfter(self.status_text.SetLabel, "Paso 4/5: Combinando audios...")
-            wx.CallAfter(self.progress.SetValue, 60)
+        success, error = generate_video_with_ads(
+            self.video_file,
+            self.audiodescriptions,
+            output_path,
+            vol_orig,
+            vol_desc,
+            progress_callback
+        )
 
-            final_audio_clips = []
-            if original_audio: final_audio_clips.append(original_audio)
-            if descriptions_audio: final_audio_clips.append(descriptions_audio)
-
-            if final_audio_clips:
-                final_audio = CompositeAudioClip(final_audio_clips)
-                video_final = video.set_audio(final_audio)
-            else:
-                video_final = video.set_audio(None)
-
-            wx.CallAfter(self.status_text.SetLabel, "Paso 5/5: Exportando video final (esto puede tardar)...")
-            wx.CallAfter(self.progress.SetValue, 80)
-
-            # Dejar que moviepy maneje el archivo de audio temporal y usar el logger de barra
-            video_final.write_videofile(
-                output_path,
-                codec='libx264',
-                audio_codec='aac',
-                remove_temp=True,
-                verbose=False,
-                logger='bar'
-            )
-
-            wx.CallAfter(self.progress.SetValue, 100)
-            wx.CallAfter(self.status_text.SetLabel, f"¡Completado! Video guardado en: {output_path}")
+        if success:
             wx.CallAfter(wx.MessageBox, f"Video generado exitosamente:\n{output_path}", "Éxito", wx.OK | wx.ICON_INFORMATION)
-
-        except Exception as e:
-            wx.CallAfter(wx.MessageBox, f"Error durante la generación del video: {e}", "Error", wx.OK | wx.ICON_ERROR)
+        else:
+            wx.CallAfter(wx.MessageBox, f"Error durante la generación del video: {error}", "Error", wx.OK | wx.ICON_ERROR)
             wx.CallAfter(self.status_text.SetLabel, "Error en la generación.")
-        finally:
-            # Liberar recursos
-            if 'video' in locals(): video.close()
-            if 'original_audio' in locals() and original_audio: original_audio.close()
-            if 'descriptions_audio' in locals() and descriptions_audio: descriptions_audio.close()
-            if 'final_audio' in locals() and final_audio: final_audio.close()
-            if 'video_final' in locals(): video_final.close()
-            for clip in audio_clips: clip.close()
-            
-            wx.CallAfter(self.update_action_buttons_state)
+        
+        wx.CallAfter(self.update_action_buttons_state)
 
 
 class MyApp(wx.App):

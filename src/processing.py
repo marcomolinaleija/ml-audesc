@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import comtypes.client
 from pathlib import Path
+from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 # It's possible comtypes.gen is not available on first run
 # This is a robust way to handle it.
@@ -55,3 +56,68 @@ def generate_tts_audio_files(items_to_generate, voice_token, rate, temp_dir, pro
     finally:
         # Uninitialize COM
         comtypes.CoUninitialize()
+
+
+def generate_video_with_ads(video_path, audio_items, output_path, vol_original, vol_description, progress_callback):
+    """
+    Generates a new video file with audio descriptions.
+    Designed to be run in a separate thread.
+    """
+    try:
+        progress_callback(0, "Paso 1/5: Iniciando generación...")
+        
+        progress_callback(10, "Paso 2/5: Cargando video principal...")
+        video = VideoFileClip(video_path)
+        
+        progress_callback(20, "Paso 3/5: Procesando audios de descripción...")
+        audio_clips = []
+        for item in audio_items:
+            try:
+                ad_clip = AudioFileClip(item.archivo_audio).set_start(item.tiempo)
+                audio_clips.append(ad_clip)
+            except Exception as e:
+                # It's better to log this to the console than to do nothing.
+                print(f"Advertencia: No se pudo cargar el archivo de audio {item.archivo_audio}: {e}")
+        
+        if audio_clips:
+            descriptions_audio = CompositeAudioClip(audio_clips).volumex(vol_description)
+        else:
+            descriptions_audio = None
+
+        original_audio = video.audio.volumex(vol_original) if video.audio else None
+        
+        progress_callback(60, "Paso 4/5: Combinando audios...")
+        final_audio_clips = []
+        if original_audio: final_audio_clips.append(original_audio)
+        if descriptions_audio: final_audio_clips.append(descriptions_audio)
+
+        if final_audio_clips:
+            final_audio = CompositeAudioClip(final_audio_clips)
+            video_final = video.set_audio(final_audio)
+        else:
+            video_final = video.set_audio(None)
+
+        progress_callback(80, "Paso 5/5: Exportando video final (esto puede tardar)...")
+        
+        video_final.write_videofile(
+            output_path,
+            codec='libx264',
+            audio_codec='aac',
+            remove_temp=True,
+            verbose=False,
+            logger=None
+        )
+
+        progress_callback(100, f"¡Completado! Video guardado en: {output_path}")
+        
+        # It's crucial to close clips to release file handles
+        video.close()
+        if original_audio: original_audio.close()
+        if descriptions_audio: descriptions_audio.close()
+        if 'final_audio' in locals() and final_audio: final_audio.close()
+        video_final.close()
+        for clip in audio_clips: clip.close()
+
+        return True, None
+    except Exception as e:
+        return False, e
