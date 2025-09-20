@@ -19,6 +19,7 @@ from pathlib import Path
 import subprocess
 import srt  # Para parsear archivos SRT
 import shutil # Para borrar directorios de archivos temporales
+from src.models import AudioDescriptionItem
 
 # Intentar importar dependencias clave
 try:
@@ -44,12 +45,7 @@ except (ImportError, OSError):
         COMTYPES_AVAILABLE = False
 
 
-class AudioDescriptionItem:
-    """Clase para representar un elemento de audiodescripción"""
-    def __init__(self, tiempo=0.0, archivo_audio="", descripcion=""):
-        self.tiempo = tiempo
-        self.archivo_audio = archivo_audio
-        self.descripcion = descripcion
+
 
 class TimeInputDialog(wx.Dialog):
     """Diálogo para que el usuario ingrese el tiempo."""
