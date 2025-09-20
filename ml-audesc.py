@@ -115,6 +115,47 @@ class TimeInputDialog(wx.Dialog):
         s = int(seconds % 60)
         return f"{h:02}:{m:02}:{s:02}"
 
+class AudioSourceDialog(wx.Dialog):
+    """Diálogo para seleccionar el origen de la audiodescripción."""
+    def __init__(self, parent):
+        super().__init__(parent, title="Seleccionar Origen del Audio", size=(350, 150))
+        self.source = None  # 'file' or 'tts'
+        self.init_ui()
+
+    def init_ui(self):
+        panel = wx.Panel(self)
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        instructions = wx.StaticText(panel, label="¿Cómo deseas agregar la audiodescripción?")
+        main_sizer.Add(instructions, 0, wx.ALL | wx.CENTER, 15)
+
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        file_btn = wx.Button(panel, label="Desde Archivo de Audio")
+        file_btn.Bind(wx.EVT_BUTTON, self.on_select_file)
+        
+        tts_btn = wx.Button(panel, label="Sintetizar con Voz (TTS)")
+        tts_btn.Bind(wx.EVT_BUTTON, self.on_select_tts)
+
+        btn_sizer.Add(file_btn, 1, wx.ALL | wx.EXPAND, 5)
+        btn_sizer.Add(tts_btn, 1, wx.ALL | wx.EXPAND, 5)
+
+        main_sizer.Add(btn_sizer, 1, wx.ALL | wx.EXPAND, 5)
+        
+        panel.SetSizer(main_sizer)
+        self.CenterOnParent()
+
+    def on_select_file(self, event):
+        self.source = 'file'
+        self.EndModal(wx.ID_OK)
+
+    def on_select_tts(self, event):
+        self.source = 'tts'
+        self.EndModal(wx.ID_OK)
+
+    def get_source(self):
+        return self.source
+
 class FileDropTarget(wx.FileDropTarget):
     def __init__(self, window, callback):
         wx.FileDropTarget.__init__(self)
@@ -507,15 +548,33 @@ class MainFrame(wx.Frame):
         if not self.video_file or not os.path.exists(self.video_file):
             wx.MessageBox("Primero selecciona un archivo de video válido.", "Error", wx.OK | wx.ICON_ERROR)
             return
+
         with TimeInputDialog(self, self.video_duration) as time_dialog:
-            if time_dialog.ShowModal() == wx.ID_OK:
-                tiempo = time_dialog.get_time_in_seconds()
-                wildcard = "Archivos de audio (*.wav;*.mp3)|*.wav;*.mp3"
-                with wx.FileDialog(self, "Seleccionar archivo de audio", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as audio_dialog:
-                    if audio_dialog.ShowModal() == wx.ID_OK:
-                        audio_path = audio_dialog.GetPath()
-                        desc_text = wx.GetTextFromUser("Ingresa una breve descripción (opcional):", "Descripción", "")
-                        item = AudioDescriptionItem(tiempo=tiempo, archivo_audio=audio_path, descripcion=desc_text)
+            if time_dialog.ShowModal() != wx.ID_OK:
+                return
+            
+            tiempo = time_dialog.get_time_in_seconds()
+
+            with AudioSourceDialog(self) as source_dialog:
+                if source_dialog.ShowModal() != wx.ID_OK:
+                    return
+                
+                source = source_dialog.get_source()
+
+                if source == 'file':
+                    wildcard = "Archivos de audio (*.wav;*.mp3)|*.wav;*.mp3"
+                    with wx.FileDialog(self, "Seleccionar archivo de audio", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as audio_dialog:
+                        if audio_dialog.ShowModal() == wx.ID_OK:
+                            audio_path = audio_dialog.GetPath()
+                            desc_text = wx.GetTextFromUser("Ingresa una breve descripción (opcional):", "Descripción", "")
+                            item = AudioDescriptionItem(tiempo=tiempo, archivo_audio=audio_path, descripcion=desc_text)
+                            self.audiodescriptions.append(item)
+                            self.update_ad_list_ctrl()
+                
+                elif source == 'tts':
+                    desc_text = wx.GetTextFromUser("Ingresa el texto para la audiodescripción:", "Sintetizar Texto", "")
+                    if desc_text: # Solo agregar si el usuario ingresó texto
+                        item = AudioDescriptionItem(tiempo=tiempo, archivo_audio="", descripcion=desc_text)
                         self.audiodescriptions.append(item)
                         self.update_ad_list_ctrl()
 
