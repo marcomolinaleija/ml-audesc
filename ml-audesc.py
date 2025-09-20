@@ -21,6 +21,7 @@ import srt  # Para parsear archivos SRT
 import shutil # Para borrar directorios de archivos temporales
 from src.models import AudioDescriptionItem
 from src.gui import TimeInputDialog, AudioSourceDialog
+from src.processing import generate_tts_audio_files
 
 # Intentar importar dependencias clave
 try:
@@ -286,53 +287,44 @@ class MainFrame(wx.Frame):
         self.generate_tts_btn.Enable(False)
         self.generate_btn.Enable(False)
         
-        thread = threading.Thread(target=self.generate_tts_thread, args=(items_to_generate,))
+        # The target for the thread is a new wrapper method
+        thread = threading.Thread(target=self.run_tts_generation_thread, args=(items_to_generate,))
         thread.daemon = True
         thread.start()
 
-    def generate_tts_thread(self, items_to_generate):
-        total_items = len(items_to_generate)
-        wx.CallAfter(self.status_text.SetLabel, "Iniciando generación de audios TTS...")
-        wx.CallAfter(self.progress.SetValue, 0)
+    def run_tts_generation_thread(self, items_to_generate):
+        # This is the method that runs in the thread
+        
+        def progress_callback(percent, message):
+            # This function will be passed to the processing module
+            if percent is not None:
+                wx.CallAfter(self.progress.SetValue, percent)
+            if message is not None:
+                wx.CallAfter(self.status_text.SetLabel, message)
 
-        try:
-            # Crear objetos SAPI una vez
-            speaker = comtypes.client.CreateObject("SAPI.SpVoice")
-            # Asignar la voz y velocidad seleccionada
-            if self.sapi_voices:
-                speaker.Voice = self.sapi_voices[self.selected_voice_index]
-            speaker.Rate = self.rate_slider.GetValue()
+        # Gather data
+        selected_voice_token = self.sapi_voices[self.selected_voice_index] if self.sapi_voices else None
+        rate = self.rate_slider.GetValue()
+        
+        # Call the decoupled function
+        success, error = generate_tts_audio_files(
+            items_to_generate, 
+            selected_voice_token, 
+            rate, 
+            self.temp_tts_dir, 
+            progress_callback
+        )
 
-            for i, item in enumerate(items_to_generate):
-                progress_percent = int(((i + 1) / total_items) * 100)
-                wx.CallAfter(self.status_text.SetLabel, f"Generando audio {i+1}/{total_items}...")
-                
-                output_filename = self.temp_tts_dir / f"tts_{item.tiempo:.2f}_{i:03d}.wav".replace('.', '_')
-
-                # Configurar stream para guardar a archivo
-                file_stream = comtypes.client.CreateObject("SAPI.SpFileStream")
-                file_stream.Open(str(output_filename), SpeechLib.SSFMCreateForWrite)
-                speaker.AudioOutputStream = file_stream
-                
-                # Generar el audio
-                speaker.Speak(item.descripcion)
-                
-                # Cerrar el stream
-                file_stream.Close()
-                
-                item.archivo_audio = str(output_filename)
-                wx.CallAfter(self.progress.SetValue, progress_percent)
-            
-            wx.CallAfter(self.status_text.SetLabel, "¡Generación de audios completada!")
+        # Post-thread GUI updates
+        if not success:
+            wx.CallAfter(wx.MessageBox, f"Ocurrió un error durante la generación de audios con SAPI5: {error}", "Error de TTS", wx.OK | wx.ICON_ERROR)
+            wx.CallAfter(self.status_text.SetLabel, "Error en la generación de audios.")
+        else:
+            # This needs to be done for the list to update
             wx.CallAfter(self.update_ad_list_ctrl)
 
-        except Exception as e:
-            # Mostramos el error en un MessageBox para mejor diagnóstico
-            wx.CallAfter(wx.MessageBox, f"Ocurrió un error durante la generación de audios con SAPI5: {e}", "Error de TTS", wx.OK | wx.ICON_ERROR)
-            wx.CallAfter(self.status_text.SetLabel, "Error en la generación de audios.")
-        finally:
-            wx.CallAfter(self.generate_tts_btn.Enable, True)
-            wx.CallAfter(self.update_action_buttons_state)
+        wx.CallAfter(self.generate_tts_btn.Enable, True)
+        wx.CallAfter(self.update_action_buttons_state)
 
     def on_tts_voice_change(self, event):
         self.selected_voice_index = self.voice_choice.GetSelection()
