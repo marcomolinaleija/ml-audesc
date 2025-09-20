@@ -22,6 +22,7 @@ import shutil # Para borrar directorios de archivos temporales
 from src.models import AudioDescriptionItem
 from src.gui import TimeInputDialog, AudioSourceDialog
 from src.processing import generate_tts_audio_files, generate_video_with_ads
+from src.project_handler import save_project, load_project
 
 # Intentar importar dependencias clave
 try:
@@ -500,15 +501,16 @@ class MainFrame(wx.Frame):
                 'rate': self.rate_slider.GetValue()
             }
         }
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        success, error = save_project(file_path, data)
+
+        if success:
             if not is_autosave:
                 self.status_text.SetLabel(f"Proyecto guardado como: {os.path.basename(file_path)}")
                 self.current_project_name = Path(file_path).stem
                 self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
-        except Exception as e:
-            wx.MessageBox(f"Error al guardar el proyecto: {e}", "Error de Guardado", wx.OK | wx.ICON_ERROR)
+        else:
+            wx.MessageBox(f"Error al guardar el proyecto: {error}", "Error de Guardado", wx.OK | wx.ICON_ERROR)
 
     def load_project_state(self, project_path=None):
         is_autosave = project_path is None
@@ -518,45 +520,44 @@ class MainFrame(wx.Frame):
         if not os.path.exists(project_path):
             return
 
-        try:
-            with open(project_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+        data, error = load_project(project_path)
 
-            self.audiodescriptions.clear()
-            self.clean_temp_files()
-
-            self.video_file = data.get('video_file', '')
-            self.video_ctrl.SetValue(self.video_file)
-            self.output_ctrl.SetValue(data.get('output_file', 'video_con_audiodescripcion.mp4'))
-            self.vol_orig_ctrl.SetValue(data.get('volume_original', 0.6))
-            self.vol_desc_ctrl.SetValue(data.get('volume_description', 1.5))
-
-            tts_settings = data.get('tts_settings', {})
-            self.selected_voice_index = tts_settings.get('voice_index', 0)
-            self.rate_slider.SetValue(tts_settings.get('rate', 0))
-
-            if self.sapi_voices and 0 <= self.selected_voice_index < len(self.sapi_voices):
-                self.voice_choice.SetSelection(self.selected_voice_index)
-
-            for desc_data in data.get('audiodescriptions', []):
-                self.audiodescriptions.append(AudioDescriptionItem(**desc_data))
-
-            self.update_ad_list_ctrl()
-            self.update_video_duration()
-            
-            if is_autosave:
-                self.status_text.SetLabel("Proyecto anterior cargado automáticamente.")
-                self.current_project_name = "Proyecto anterior"
-            else:
-                self.status_text.SetLabel(f"Proyecto '{os.path.basename(project_path)}' cargado.")
-                self.current_project_name = Path(project_path).stem
-            
-            self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
-
-        except Exception as e:
-            wx.MessageBox(f"Error al cargar el proyecto: {e}", "Error de Carga", wx.OK | wx.ICON_ERROR)
+        if error:
+            wx.MessageBox(f"Error al cargar el proyecto: {error}", "Error de Carga", wx.OK | wx.ICON_ERROR)
             self.current_project_name = None
             self.SetTitle(self.app_title_base)
+            return
+
+        self.audiodescriptions.clear()
+        self.clean_temp_files()
+
+        self.video_file = data.get('video_file', '')
+        self.video_ctrl.SetValue(self.video_file)
+        self.output_ctrl.SetValue(data.get('output_file', 'video_con_audiodescripcion.mp4'))
+        self.vol_orig_ctrl.SetValue(data.get('volume_original', 0.6))
+        self.vol_desc_ctrl.SetValue(data.get('volume_description', 1.5))
+
+        tts_settings = data.get('tts_settings', {})
+        self.selected_voice_index = tts_settings.get('voice_index', 0)
+        self.rate_slider.SetValue(tts_settings.get('rate', 0))
+
+        if self.sapi_voices and 0 <= self.selected_voice_index < len(self.sapi_voices):
+            self.voice_choice.SetSelection(self.selected_voice_index)
+
+        for desc_data in data.get('audiodescriptions', []):
+            self.audiodescriptions.append(AudioDescriptionItem(**desc_data))
+
+        self.update_ad_list_ctrl()
+        self.update_video_duration()
+        
+        if is_autosave:
+            self.status_text.SetLabel("Proyecto anterior cargado automáticamente.")
+            self.current_project_name = "Proyecto anterior"
+        else:
+            self.status_text.SetLabel(f"Proyecto '{os.path.basename(project_path)}' cargado.")
+            self.current_project_name = Path(project_path).stem
+        
+        self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
 
     def on_import_project(self, event):
         with wx.FileDialog(self, "Importar proyecto", wildcard="Archivos JSON (*.json)|*.json", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
