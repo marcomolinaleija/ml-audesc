@@ -2,11 +2,11 @@
 import wx
 import wx.adv
 import os
-import sys
+
 import threading
 import time
 from pathlib import Path
-import srt
+
 import shutil
 
 from .models import AudioDescriptionItem
@@ -123,19 +123,26 @@ class MainFrame(wx.Frame):
     def __init__(self):
         super().__init__(None, title="Generador de Audiodescripciones", size=(1000, 800))
         self.app_title_base = "Generador de Audiodescripciones"
-        self.current_project_name = None
+
+        # Initialize data attributes
         self.video_file = ""
         self.video_duration = 0.0
         self.audiodescriptions = []
-        self.temp_preview_files = []
         self.temp_tts_dir = None
-
+        self.current_project_name = None
         self.sapi_voices = []
         self.selected_voice_index = 0
-        self.init_tts_engine()
 
+        self.init_tts_engine()
         self.init_ui()
         self.check_dependencies()
+
+        # Set initial UI state
+        self.update_ad_list_ctrl()
+        self.update_action_buttons_state()
+        self.status_text.SetLabel("Listo")
+        self.SetTitle(self.app_title_base)
+
         self.load_project_state()
         self.Bind(wx.EVT_CLOSE, self.save_project_state_and_exit)
 
@@ -156,7 +163,7 @@ class MainFrame(wx.Frame):
         file_menu.AppendSeparator()
         exit_item = file_menu.Append(wx.ID_EXIT, "&Cerrar\tAlt+F4", "Cerrar la aplicación")
         self.Bind(wx.EVT_MENU, self.on_import_srt_project, import_srt_item)
-        self.Bind(wx.EVT_MENU, self.on_save_as_project, save_as_item)
+        self.Bind(wx.EVT_MENU, self.on_save_project_as, save_as_item)
         self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
         menu_bar.Append(file_menu, "&Archivo")
         
@@ -187,13 +194,10 @@ class MainFrame(wx.Frame):
         add_btn.Bind(wx.EVT_BUTTON, self.on_add_audiodescription)
         import_btn = wx.Button(panel, label="&Importar Proyecto")
         import_btn.Bind(wx.EVT_BUTTON, self.on_import_project)
-        export_btn = wx.Button(panel, label="&Exportar Proyecto")
-        export_btn.Bind(wx.EVT_BUTTON, self.on_export_project)
         clear_btn = wx.Button(panel, label="&Limpiar Proyecto")
         clear_btn.Bind(wx.EVT_BUTTON, self.on_clear_project)
         control_sizer.Add(add_btn, 0, wx.ALL, 5)
         control_sizer.Add(import_btn, 0, wx.ALL, 5)
-        control_sizer.Add(export_btn, 0, wx.ALL, 5)
         control_sizer.Add(clear_btn, 0, wx.ALL, 5)
 
         self.ad_list_ctrl = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_VRULES)
@@ -288,6 +292,15 @@ class MainFrame(wx.Frame):
             self.voice_choice.Enable(False)
             self.rate_slider.Enable(False)
 
+    def _clean_tts_files(self):
+        if self.temp_tts_dir and os.path.exists(self.temp_tts_dir):
+            try:
+                shutil.rmtree(self.temp_tts_dir)
+                print(f"Directorio temporal TTS eliminado: {self.temp_tts_dir}")
+            except Exception as e:
+                print(f"Error al eliminar directorio temporal TTS {self.temp_tts_dir}: {e}")
+        self.temp_tts_dir = None
+
     def on_import_srt_project(self, event):
         if not self.video_file or not os.path.exists(self.video_file):
             wx.MessageBox("Primero selecciona un archivo de video válido.", "Error", wx.OK | wx.ICON_ERROR)
@@ -309,7 +322,7 @@ class MainFrame(wx.Frame):
                 confirm = wx.MessageBox(f"Se encontraron {len(subs)} descripciones. ¿Deseas importarlas? Esto limpiará la lista actual.", "Confirmar Importación de SRT", wx.YES_NO | wx.ICON_QUESTION)
                 if confirm == wx.YES:
                     self.audiodescriptions.clear()
-                    self.clean_temp_files()
+                    self._clean_tts_files()
                     for sub in subs:
                         item = AudioDescriptionItem(
                             tiempo=sub.start.total_seconds(),
@@ -379,24 +392,10 @@ class MainFrame(wx.Frame):
 
     def save_project_state_and_exit(self, event):
         self.save_project_state()
-        self.clean_temp_files()
+        self._clean_tts_files()
         event.Skip()
 
-    def clean_temp_files(self):
-        for f_path in self.temp_preview_files:
-            try:
-                if os.path.exists(f_path): os.remove(f_path)
-            except Exception as e:
-                print(f"Error al eliminar archivo temporal {f_path}: {e}")
-        self.temp_preview_files.clear()
 
-        if self.temp_tts_dir and os.path.exists(self.temp_tts_dir):
-            try:
-                shutil.rmtree(self.temp_tts_dir)
-                print(f"Directorio temporal TTS eliminado: {self.temp_tts_dir}")
-            except Exception as e:
-                print(f"Error al eliminar directorio temporal TTS {self.temp_tts_dir}: {e}")
-        self.temp_tts_dir = None
 
     def update_ad_list_ctrl(self):
         self.ad_list_ctrl.DeleteAllItems()
@@ -432,16 +431,16 @@ class MainFrame(wx.Frame):
         wildcard = "Archivos de video (*.mp4;*.avi;*.mov;*.mkv)|*.mp4;*.avi;*.mov;*.mkv"
         with wx.FileDialog(self, "Seleccionar archivo de video", wildcard=wildcard, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
-                self.on_drop_video_file(dialog.GetPath())
+                file_path = dialog.GetPath()
+                self.video_file = file_path
+                self.video_ctrl.SetValue(self.video_file)
+                self.update_video_duration()
+                video_path = Path(self.video_file)
+                output_name = f"{video_path.stem}_con_audiodescripcion{video_path.suffix}"
+                self.output_ctrl.SetValue(output_name)
+                self.update_action_buttons_state()
 
-    def on_drop_video_file(self, file_path):
-        self.video_file = file_path
-        self.video_ctrl.SetValue(self.video_file)
-        self.update_video_duration()
-        video_path = Path(self.video_file)
-        output_name = f"{video_path.stem}_con_audiodescripcion{video_path.suffix}"
-        self.output_ctrl.SetValue(output_name)
-        self.update_action_buttons_state()
+
 
     def update_video_duration(self):
         if self.video_file and os.path.exists(self.video_file):
@@ -565,7 +564,7 @@ class MainFrame(wx.Frame):
             return
 
         self.audiodescriptions.clear()
-        self.clean_temp_files()
+        self._clean_tts_files()
 
         self.video_file = data.get('video_file', '')
         self.video_ctrl.SetValue(self.video_file)
@@ -600,7 +599,7 @@ class MainFrame(wx.Frame):
             if dialog.ShowModal() == wx.ID_OK:
                 self.load_project_state(dialog.GetPath())
 
-    def on_export_project(self, event):
+    def on_save_project_as(self, event):
         default_file = f"{self.current_project_name}.json" if self.current_project_name else "proyecto.json"
         with wx.FileDialog(self, "Exportar proyecto", defaultFile=default_file, wildcard="Archivos JSON (*.json)|*.json", style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
@@ -609,21 +608,25 @@ class MainFrame(wx.Frame):
                     project_path += '.json'
                 self.save_project_state(project_path)
 
-    def on_save_as_project(self, event):
-        self.on_export_project(event)
+
+
+    def _reset_project_state(self):
+        self._clean_tts_files()
+        self.video_file = ""
+        self.video_duration = 0.0
+        self.audiodescriptions.clear()
+        self.current_project_name = None
+
+        # Update UI
+        self.video_ctrl.SetValue("")
+        self.video_duration_label.SetLabel("Duración: 00:00:00")
+        self.update_ad_list_ctrl()
+        self.status_text.SetLabel("Proyecto limpiado.")
+        self.SetTitle(self.app_title_base)
 
     def on_clear_project(self, event):
         if wx.MessageBox("¿Estás seguro de que quieres limpiar todo el proyecto?", "Confirmar Limpieza", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
-            self.clean_temp_files()
-            self.video_file = ""
-            self.video_duration = 0.0
-            self.audiodescriptions.clear()
-            self.video_ctrl.SetValue("")
-            self.video_duration_label.SetLabel("Duración: 00:00:00")
-            self.update_ad_list_ctrl()
-            self.status_text.SetLabel("Proyecto limpiado.")
-            self.current_project_name = None
-            self.SetTitle(self.app_title_base)
+            self._reset_project_state()
 
     def on_generate(self, event):
         if not self.video_file or not os.path.exists(self.video_file):

@@ -49,21 +49,22 @@ def generate_tts_audio_files(items_to_generate, voice_token, rate, temp_dir, pro
 
         for i, item in enumerate(items_to_generate):
             progress_percent = int(((i + 1) / total_items) * 100)
-            # Callback to update message only
             progress_callback(None, f"Generando audio {i+1}/{total_items}...")
 
             output_filename = Path(temp_dir) / f"tts_{item.tiempo:.2f}_{i:03d}.wav".replace('.', '_')
-
-            file_stream = comtypes.client.CreateObject("SAPI.SpFileStream")
-            file_stream.Open(str(output_filename), SpeechLib.SSFMCreateForWrite)
-            speaker.AudioOutputStream = file_stream
-            
-            speaker.Speak(item.descripcion)
-            file_stream.Close()
-            
-            item.archivo_audio = str(output_filename)
-            # Callback to update percentage only
-            progress_callback(progress_percent, None)
+            file_stream = None
+            try:
+                file_stream = comtypes.client.CreateObject("SAPI.SpFileStream")
+                file_stream.Open(str(output_filename), SpeechLib.SSFMCreateForWrite)
+                speaker.AudioOutputStream = file_stream
+                
+                speaker.Speak(item.descripcion)
+                
+                item.archivo_audio = str(output_filename)
+                progress_callback(progress_percent, None)
+            finally:
+                if file_stream:
+                    file_stream.Close()
 
         progress_callback(100, "¡Generación de audios completada!")
         return True, None  # Success, no error
@@ -88,6 +89,13 @@ def generate_video_with_ads(video_path, audio_items, output_path, vol_original, 
     Generates a new video file with audio descriptions.
     Designed to be run in a separate thread.
     """
+    video = None
+    original_audio = None
+    descriptions_audio = None
+    final_audio = None
+    video_final = None
+    audio_clips = []
+
     try:
         progress_callback(0, "Paso 1/5: Iniciando generación...")
         
@@ -95,26 +103,21 @@ def generate_video_with_ads(video_path, audio_items, output_path, vol_original, 
         video = VideoFileClip(video_path)
         
         progress_callback(20, "Paso 3/5: Procesando audios de descripción...")
-        audio_clips = []
         for item in audio_items:
             try:
                 ad_clip = AudioFileClip(item.archivo_audio).set_start(item.tiempo)
                 audio_clips.append(ad_clip)
             except Exception as e:
-                # It's better to log this to the console than to do nothing.
                 print(f"Advertencia: No se pudo cargar el archivo de audio {item.archivo_audio}: {e}")
         
         if audio_clips:
             descriptions_audio = CompositeAudioClip(audio_clips).volumex(vol_description)
-        else:
-            descriptions_audio = None
 
-        original_audio = video.audio.volumex(vol_original) if video.audio else None
+        if video.audio:
+            original_audio = video.audio.volumex(vol_original)
         
         progress_callback(60, "Paso 4/5: Combinando audios...")
-        final_audio_clips = []
-        if original_audio: final_audio_clips.append(original_audio)
-        if descriptions_audio: final_audio_clips.append(descriptions_audio)
+        final_audio_clips = [aud for aud in [original_audio, descriptions_audio] if aud is not None]
 
         if final_audio_clips:
             final_audio = CompositeAudioClip(final_audio_clips)
@@ -135,14 +138,14 @@ def generate_video_with_ads(video_path, audio_items, output_path, vol_original, 
 
         progress_callback(100, f"¡Completado! Video guardado en: {output_path}")
         
-        # It's crucial to close clips to release file handles
-        video.close()
-        if original_audio: original_audio.close()
-        if descriptions_audio: descriptions_audio.close()
-        if 'final_audio' in locals() and final_audio: final_audio.close()
-        video_final.close()
-        for clip in audio_clips: clip.close()
-
         return True, None
     except Exception as e:
         return False, e
+    finally:
+        # It's crucial to close clips to release file handles
+        if video: video.close()
+        if original_audio: original_audio.close()
+        if descriptions_audio: descriptions_audio.close()
+        if final_audio: final_audio.close()
+        if video_final: video_final.close()
+        for clip in audio_clips: clip.close()
