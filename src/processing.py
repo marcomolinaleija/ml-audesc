@@ -11,6 +11,22 @@ try:
 except (ImportError, OSError):
     COMTYPES_AVAILABLE = False
 
+def get_sapi_voices():
+    """Returns a list of available SAPI5 voices."""
+    if not COMTYPES_AVAILABLE:
+        return []
+    
+    voices = []
+    try:
+        comtypes.CoInitialize()
+        speaker = comtypes.client.CreateObject("SAPI.SpVoice")
+        voices = list(speaker.GetVoices())
+    except Exception as e:
+        print(f"Error al obtener voces SAPI5: {e}")
+    finally:
+        comtypes.CoUninitialize()
+    return voices
+
 def generate_tts_audio_files(items_to_generate, voice_token, rate, temp_dir, progress_callback):
     """
     Generates TTS audio files for a list of items.
@@ -57,6 +73,15 @@ def generate_tts_audio_files(items_to_generate, voice_token, rate, temp_dir, pro
         # Uninitialize COM
         comtypes.CoUninitialize()
 
+
+def get_video_metadata(video_path):
+    """Extracts metadata from a video file."""
+    try:
+        with VideoFileClip(video_path) as video_clip:
+            return {"duration": video_clip.duration}
+    except Exception as e:
+        print(f"Error al obtener metadatos del video {video_path}: {e}")
+        return None
 
 def generate_video_with_ads(video_path, audio_items, output_path, vol_original, vol_description, progress_callback):
     """

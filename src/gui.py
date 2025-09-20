@@ -9,27 +9,8 @@ from pathlib import Path
 import srt
 import shutil
 
-# Intentar importar dependencias clave
-try:
-    from moviepy.editor import VideoFileClip
-    MOVIEPY_AVAILABLE = True
-except ImportError:
-    MOVIEPY_AVAILABLE = False
-
-try:
-    import comtypes.client
-    from comtypes.gen import SpeechLib
-    COMTYPES_AVAILABLE = True
-except (ImportError, OSError):
-    try:
-        comtypes.client.GetModule("sapi.dll")
-        from comtypes.gen import SpeechLib
-        COMTYPES_AVAILABLE = True
-    except (ImportError, OSError):
-        COMTYPES_AVAILABLE = False
-
 from .models import AudioDescriptionItem
-from .processing import generate_tts_audio_files, generate_video_with_ads
+from .processing import generate_tts_audio_files, generate_video_with_ads, get_sapi_voices, get_video_metadata
 from .project_handler import save_project, load_project, load_srt_file
 
 def format_time(seconds):
@@ -159,17 +140,10 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.save_project_state_and_exit)
 
     def init_tts_engine(self):
-        if not COMTYPES_AVAILABLE:
-            self.sapi_voices = []
-            return
-        try:
-            speaker = comtypes.client.CreateObject("SAPI.SpVoice")
-            self.sapi_voices = list(speaker.GetVoices())
-            if not self.sapi_voices:
-                print("No se encontraron voces SAPI5.")
-        except Exception as e:
-            print(f"Error fatal al inicializar SAPI5: {e}")
-            self.sapi_voices = []
+
+        self.sapi_voices = get_sapi_voices()
+        if not self.sapi_voices:
+            print("No se encontraron voces SAPI5.")
 
     def init_ui(self):
         panel = wx.Panel(self)
@@ -308,10 +282,7 @@ class MainFrame(wx.Frame):
         self.Center()
 
     def check_dependencies(self):
-        if not MOVIEPY_AVAILABLE:
-            wx.MessageBox("MoviePy no está instalado. Funciones de video deshabilitadas.", "Dependencias faltantes", wx.OK | wx.ICON_WARNING)
-            self.generate_btn.Enable(False)
-        if not COMTYPES_AVAILABLE or not self.sapi_voices:
+        if not self.sapi_voices:
             wx.MessageBox("El motor de voz de Windows (SAPI5) no está disponible o no se encontraron voces. Funciones de TTS deshabilitadas.", "Dependencias faltantes", wx.OK | wx.ICON_WARNING)
             self.generate_tts_btn.Enable(False)
             self.voice_choice.Enable(False)
@@ -358,7 +329,7 @@ class MainFrame(wx.Frame):
             wx.MessageBox("No hay descripciones sin audio para generar.", "Información", wx.OK | wx.ICON_INFORMATION)
             return
         
-        if not COMTYPES_AVAILABLE or not self.sapi_voices:
+        if not self.sapi_voices:
             wx.MessageBox("El motor de Texto a Voz (TTS) no está disponible.", "Error TTS", wx.OK | wx.ICON_ERROR)
             return
 
@@ -441,10 +412,10 @@ class MainFrame(wx.Frame):
         self.update_action_buttons_state()
 
     def update_action_buttons_state(self):
-        can_generate_video = bool(MOVIEPY_AVAILABLE and self.video_file and os.path.exists(self.video_file) and self.audiodescriptions and all(item.archivo_audio and os.path.exists(item.archivo_audio) for item in self.audiodescriptions))
+        can_generate_video = bool(self.video_duration > 0 and self.video_file and os.path.exists(self.video_file) and self.audiodescriptions and all(item.archivo_audio and os.path.exists(item.archivo_audio) for item in self.audiodescriptions))
         self.generate_btn.Enable(can_generate_video)
         
-        can_generate_tts = bool(COMTYPES_AVAILABLE and self.sapi_voices and self.audiodescriptions and any(not item.archivo_audio and item.descripcion for item in self.audiodescriptions))
+        can_generate_tts = bool(self.sapi_voices and self.audiodescriptions and any(not item.archivo_audio and item.descripcion for item in self.audiodescriptions))
         self.generate_tts_btn.Enable(can_generate_tts)
 
     def on_about(self, event):
@@ -474,14 +445,14 @@ class MainFrame(wx.Frame):
 
     def update_video_duration(self):
         if self.video_file and os.path.exists(self.video_file):
-            try:
-                with VideoFileClip(self.video_file) as video_clip:
-                    self.video_duration = video_clip.duration
+            metadata = get_video_metadata(self.video_file)
+            if metadata:
+                self.video_duration = metadata['duration']
                 self.video_duration_label.SetLabel(f"Duración: {format_time(self.video_duration)}")
-            except Exception as e:
+            else:
                 self.video_duration = 0.0
                 self.video_duration_label.SetLabel("Duración: Error")
-                wx.MessageBox(f"No se pudo obtener la duración del video: {e}", "Error de Video", wx.OK | wx.ICON_ERROR)
+                wx.MessageBox("No se pudo obtener la duración del video.", "Error de Video", wx.OK | wx.ICON_ERROR)
         else:
             self.video_duration = 0.0
             self.video_duration_label.SetLabel("Duración: N/A")
