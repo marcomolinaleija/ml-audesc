@@ -50,17 +50,7 @@ except (ImportError, OSError):
 
 
 
-class FileDropTarget(wx.FileDropTarget):
-    def __init__(self, window, callback):
-        wx.FileDropTarget.__init__(self)
-        self.window = window
-        self.callback = callback
 
-    def OnDropFiles(self, x, y, filenames):
-        if filenames and len(filenames) == 1:
-            self.callback(filenames[0])
-            return True
-        return False
 
 class MainFrame(wx.Frame):
     def __init__(self):
@@ -124,7 +114,6 @@ class MainFrame(wx.Frame):
         video_box = wx.StaticBox(panel, label="Archivo de Video")
         video_sizer = wx.StaticBoxSizer(video_box, wx.HORIZONTAL)
         self.video_ctrl = wx.TextCtrl(panel, style=wx.TE_READONLY)
-        self.video_ctrl.SetDropTarget(FileDropTarget(self.video_ctrl, self.on_drop_video_file))
         video_browse_btn = wx.Button(panel, label="&Seleccionar Video...")
         video_browse_btn.Bind(wx.EVT_BUTTON, self.on_browse_video)
         self.video_duration_label = wx.StaticText(panel, label="Duración: 00:00:00")
