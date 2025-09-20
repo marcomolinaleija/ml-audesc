@@ -30,7 +30,14 @@ except (ImportError, OSError):
 
 from .models import AudioDescriptionItem
 from .processing import generate_tts_audio_files, generate_video_with_ads
-from .project_handler import save_project, load_project
+from .project_handler import save_project, load_project, load_srt_file
+
+def format_time(seconds):
+    """Formatea segundos a una cadena HH:MM:SS."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02}:{m:02}:{s:02}"
 
 class TimeInputDialog(wx.Dialog):
     """Diálogo para que el usuario ingrese el tiempo."""
@@ -85,16 +92,10 @@ class TimeInputDialog(wx.Dialog):
 
     def on_seconds_spin_change(self, event):
         self.time_in_seconds = self.seconds_spin_ctrl.GetValue()
-        self.time_text_ctrl.SetValue(self.format_time(self.time_in_seconds))
+        self.time_text_ctrl.SetValue(format_time(self.time_in_seconds))
 
     def get_time_in_seconds(self):
         return self.time_in_seconds
-
-    def format_time(self, seconds):
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        return f"{h:02}:{m:02}:{s:02}"
 
 class AudioSourceDialog(wx.Dialog):
     """Diálogo para seleccionar el origen de la audiodescripción.""" 
@@ -324,33 +325,32 @@ class MainFrame(wx.Frame):
         with wx.FileDialog(self, "Importar archivo SRT", wildcard="Archivos SRT (*.srt)|*.srt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
                 srt_path = dialog.GetPath()
-                try:
-                    with open(srt_path, 'r', encoding='utf-8-sig') as f:
-                        subs = list(srt.parse(f.read()))
+                subs, error = load_srt_file(srt_path)
+
+                if error:
+                    wx.MessageBox(f"Error al importar el archivo SRT: {error}", "Error de Importación", wx.OK | wx.ICON_ERROR)
+                    return
+
+                if not subs:
+                    wx.MessageBox("El archivo SRT está vacío o no tiene un formato válido.", "Error", wx.OK | wx.ICON_ERROR)
+                    return
+
+                confirm = wx.MessageBox(f"Se encontraron {len(subs)} descripciones. ¿Deseas importarlas? Esto limpiará la lista actual.", "Confirmar Importación de SRT", wx.YES_NO | wx.ICON_QUESTION)
+                if confirm == wx.YES:
+                    self.audiodescriptions.clear()
+                    self.clean_temp_files()
+                    for sub in subs:
+                        item = AudioDescriptionItem(
+                            tiempo=sub.start.total_seconds(),
+                            descripcion=sub.content.replace('\n', ' '),
+                            archivo_audio=""
+                        )
+                        self.audiodescriptions.append(item)
                     
-                    if not subs:
-                        wx.MessageBox("El archivo SRT está vacío o no tiene un formato válido.", "Error", wx.OK | wx.ICON_ERROR)
-                        return
-
-                    confirm = wx.MessageBox(f"Se encontraron {len(subs)} descripciones. ¿Deseas importarlas? Esto limpiará la lista actual.", "Confirmar Importación de SRT", wx.YES_NO | wx.ICON_QUESTION)
-                    if confirm == wx.YES:
-                        self.audiodescriptions.clear()
-                        self.clean_temp_files()
-                        for sub in subs:
-                            item = AudioDescriptionItem(
-                                tiempo=sub.start.total_seconds(),
-                                descripcion=sub.content.replace('\n', ' '),
-                                archivo_audio=""
-                            )
-                            self.audiodescriptions.append(item)
-                        
-                        self.update_ad_list_ctrl()
-                        self.status_text.SetLabel(f"{len(subs)} descripciones cargadas desde SRT. Listas para generar audio.")
-                        self.current_project_name = Path(srt_path).stem
-                        self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
-
-                except Exception as e:
-                    wx.MessageBox(f"Error al importar el archivo SRT: {e}", "Error de Importación", wx.OK | wx.ICON_ERROR)
+                    self.update_ad_list_ctrl()
+                    self.status_text.SetLabel(f"{len(subs)} descripciones cargadas desde SRT. Listas para generar audio.")
+                    self.current_project_name = Path(srt_path).stem
+                    self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
 
     def on_generate_tts_audios(self, event):
         items_to_generate = [item for item in self.audiodescriptions if not item.archivo_audio and item.descripcion]
@@ -433,7 +433,7 @@ class MainFrame(wx.Frame):
         self.audiodescriptions = sorted_descriptions
 
         for item in self.audiodescriptions:
-            index = self.ad_list_ctrl.InsertItem(self.ad_list_ctrl.GetItemCount(), self.format_time(item.tiempo))
+            index = self.ad_list_ctrl.InsertItem(self.ad_list_ctrl.GetItemCount(), format_time(item.tiempo))
             audio_display = os.path.basename(item.archivo_audio) if item.archivo_audio else "--- PENDIENTE DE GENERAR ---"
             self.ad_list_ctrl.SetItem(index, 1, audio_display)
             self.ad_list_ctrl.SetItem(index, 2, item.descripcion)
@@ -446,12 +446,6 @@ class MainFrame(wx.Frame):
         
         can_generate_tts = bool(COMTYPES_AVAILABLE and self.sapi_voices and self.audiodescriptions and any(not item.archivo_audio and item.descripcion for item in self.audiodescriptions))
         self.generate_tts_btn.Enable(can_generate_tts)
-
-    def format_time(self, seconds):
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        return f"{h:02}:{m:02}:{s:02}"
 
     def on_about(self, event):
         info = wx.adv.AboutDialogInfo()
@@ -483,7 +477,7 @@ class MainFrame(wx.Frame):
             try:
                 with VideoFileClip(self.video_file) as video_clip:
                     self.video_duration = video_clip.duration
-                self.video_duration_label.SetLabel(f"Duración: {self.format_time(self.video_duration)}")
+                self.video_duration_label.SetLabel(f"Duración: {format_time(self.video_duration)}")
             except Exception as e:
                 self.video_duration = 0.0
                 self.video_duration_label.SetLabel("Duración: Error")
