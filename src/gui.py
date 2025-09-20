@@ -336,6 +336,27 @@ class MainFrame(wx.Frame):
                     self.current_project_name = Path(srt_path).stem
                     self.SetTitle(f"{self.current_project_name} - {self.app_title_base}")
 
+    def _run_in_thread(self, target_func, *args):
+        def thread_target():
+            def progress_callback(percent, message):
+                if percent is not None:
+                    wx.CallAfter(self.progress.SetValue, percent)
+                if message is not None:
+                    wx.CallAfter(self.status_text.SetLabel, message)
+
+            success, error = target_func(*args, progress_callback=progress_callback)
+
+            if not success:
+                wx.CallAfter(wx.MessageBox, f"Ocurrió un error: {error}", "Error", wx.OK | wx.ICON_ERROR)
+                wx.CallAfter(self.status_text.SetLabel, "Error en la operación.")
+            
+            wx.CallAfter(self.update_ad_list_ctrl)
+            wx.CallAfter(self.update_action_buttons_state)
+
+        thread = threading.Thread(target=thread_target)
+        thread.daemon = True
+        thread.start()
+
     def on_generate_tts_audios(self, event):
         items_to_generate = [item for item in self.audiodescriptions if not item.archivo_audio and item.descripcion]
         if not items_to_generate:
@@ -352,37 +373,17 @@ class MainFrame(wx.Frame):
 
         self.generate_tts_btn.Enable(False)
         self.generate_btn.Enable(False)
-        
-        thread = threading.Thread(target=self.run_tts_generation_thread, args=(items_to_generate,))
-        thread.daemon = True
-        thread.start()
-
-    def run_tts_generation_thread(self, items_to_generate):
-        def progress_callback(percent, message):
-            if percent is not None:
-                wx.CallAfter(self.progress.SetValue, percent)
-            if message is not None:
-                wx.CallAfter(self.status_text.SetLabel, message)
 
         selected_voice_token = self.sapi_voices[self.selected_voice_index] if self.sapi_voices else None
         rate = self.rate_slider.GetValue()
-        
-        success, error = generate_tts_audio_files(
-            items_to_generate, 
-            selected_voice_token, 
-            rate, 
-            self.temp_tts_dir, 
-            progress_callback
+
+        self._run_in_thread(
+            generate_tts_audio_files,
+            items_to_generate,
+            selected_voice_token,
+            rate,
+            self.temp_tts_dir
         )
-
-        if not success:
-            wx.CallAfter(wx.MessageBox, f"Ocurrió un error durante la generación de audios con SAPI5: {error}", "Error de TTS", wx.OK | wx.ICON_ERROR)
-            wx.CallAfter(self.status_text.SetLabel, "Error en la generación de audios.")
-        else:
-            wx.CallAfter(self.update_ad_list_ctrl)
-
-        wx.CallAfter(self.generate_tts_btn.Enable, True)
-        wx.CallAfter(self.update_action_buttons_state)
 
     def on_tts_voice_change(self, event):
         self.selected_voice_index = self.voice_choice.GetSelection()
@@ -646,38 +647,18 @@ class MainFrame(wx.Frame):
 
         self.generate_btn.Enable(False)
         self.generate_tts_btn.Enable(False)
-        
-        thread = threading.Thread(target=self.run_video_generation_thread)
-        thread.daemon = True
-        thread.start()
 
-    def run_video_generation_thread(self):
-        def progress_callback(percent, message):
-            if percent is not None:
-                wx.CallAfter(self.progress.SetValue, percent)
-            if message is not None:
-                wx.CallAfter(self.status_text.SetLabel, message)
-        
-        output_path = self.output_ctrl.GetValue()
         vol_orig = self.vol_orig_ctrl.GetValue()
         vol_desc = self.vol_desc_ctrl.GetValue()
 
-        success, error = generate_video_with_ads(
+        self._run_in_thread(
+            generate_video_with_ads,
             self.video_file,
             self.audiodescriptions,
             output_path,
             vol_orig,
-            vol_desc,
-            progress_callback
+            vol_desc
         )
-
-        if success:
-            wx.CallAfter(wx.MessageBox, f"Video generado exitosamente:\n{output_path}", "Éxito", wx.OK | wx.ICON_INFORMATION)
-        else:
-            wx.CallAfter(wx.MessageBox, f"Error durante la generación del video: {error}", "Error", wx.OK | wx.ICON_ERROR)
-            wx.CallAfter(self.status_text.SetLabel, "Error en la generación.")
-        
-        wx.CallAfter(self.update_action_buttons_state)
 
 class MyApp(wx.App):
     def OnInit(self):
